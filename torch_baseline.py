@@ -9,11 +9,12 @@ import torch
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
 import numpy as np
+from model_v1 import QueryModel
 
 # Load Dataset
 df_train = pd.read_table("./baseline_tfidf_lr/oppo_breeno_round1_data/gaiic_track3_round1_train_20210228.tsv",
                          names=['q1', 'q2', 'label']).fillna("0")
-df_test = pd.read_table('./baseline_tfidf_lr/oppo_breeno_round1_data/gaiic_track3_round1_testA_20210228.tsv',
+df_test = pd.read_table('./baseline_tfidf_lr/oppo_breeno_round1_data/gaiic_track3_round1_testB_20210317.tsv',
                         names=['q1', 'q2']).fillna("0")
 
 df_train_ = shuffle(df_train)
@@ -34,7 +35,7 @@ for index, (train_index, val_index) in enumerate(kfold.split(df_train_)):
 
     # aliment dictionary id with bert token id
     tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
-    model = BertForMaskedLM.from_pretrained('bert-base-chinese')
+    model = QueryModel()
     dictionary.aliment_bert_id(tokenizer)
 
     # process data
@@ -133,7 +134,7 @@ for index, (train_index, val_index) in enumerate(kfold.split(df_train_)):
                 q1, q2 = q1_ids.to(device), q2_ids.to(device)
 
                 # predict
-                pred = model(q1, q2)  # bs 128
+                pred, _ = model(q1, q2)  # bs 128
                 if i == 0:
                     pred_size = pred.size(0)
                 for k in range(pred.size(0)):

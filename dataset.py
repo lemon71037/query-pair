@@ -95,18 +95,16 @@ class OppoQuerySet(Dataset):
         text1_ids = [tokens.get(t, 100) for t in text1]
         text2_ids = [tokens.get(t, 100) for t in text2]
 
-        if random:
-            mask1_ids, out1_ids = self.random_mask(text1_ids, tokens)
-            mask2_ids, out2_ids = self.random_mask(text2_ids, tokens)
-        else:
-            text1_out = [0] * len(text1_ids)
-            text2_out = [0] * len(text2_ids)
+        mask1_ids, out1_ids = self.random_mask(text1_ids, tokens)
+        mask2_ids, out2_ids = self.random_mask(text2_ids, tokens)
+
+        tok1_ids = [101] + mask1_ids + [102]
+        tok2_ids = [101] + mask2_ids + [102]
 
         q1_ids = [101] + text1_ids + [102]
         q2_ids = [101] + text2_ids + [102]
 
-        tok1_ids = [101] + mask1_ids + [102]
-        tok2_ids = [101] + mask2_ids + [102]
+
 
         out1_ids = [0] + out1_ids + [0]
         out2_ids = [0] + out2_ids + [0]

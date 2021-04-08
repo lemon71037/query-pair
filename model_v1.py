@@ -60,7 +60,7 @@ class QueryModel(nn.Module):
         predict = self.classifier(joint_feature)  # bs, 1
 
         if label is not None:
-            loss += nn.functional.binary_cross_entropy(predict, label)
+            loss += nn.functional.binary_cross_entropy(predict.view(bs, -1), label.view(bs, -1))
 
         if q1_out is not None:
             q11_out, q11_feat = self.encoder(q1, output_all_encoded_layers=False)  # bs,seq_len, 768; bs, 768
@@ -71,26 +71,26 @@ class QueryModel(nn.Module):
             q21_pred = self.mlm_head(q21_out)
 
             # mlm loss
-            loss += nn.functional.cross_entropy(q11_pred.view(-1, 21128), q11_out.view(-1), ignore_index=0)
-            loss += nn.functional.cross_entropy(q21_pred.view(-1, 21128), q21_out.view(-1), ignore_index=0)
+            loss += 0.5 * nn.functional.cross_entropy(q11_pred.view(-1, 21128), q1_out.view(-1), ignore_index=0)
+            loss += 0.5 * nn.functional.cross_entropy(q21_pred.view(-1, 21128), q2_out.view(-1), ignore_index=0)
 
             # crl loss
             q1_q11_sim = cosine_similarity_of(q1_feat, q11_feat)
             q2_q21_sim = cosine_similarity_of(q2_feat, q21_feat)
             crl_label = torch.LongTensor([i for i in range(bs)]).cuda()  # batchsize * 1
-            loss += nn.functional.cross_entropy(q1_q11_sim / temp, crl_label)
-            loss += nn.functional.cross_entropy(q2_q21_sim / temp, crl_label)
+            loss += 0.5 * nn.functional.cross_entropy(q1_q11_sim / temp, crl_label)
+            loss += 0.5 * nn.functional.cross_entropy(q2_q21_sim / temp, crl_label)
 
             if label is not None:
                 nonzero = torch.sum(label).int().item()
 
                 if nonzero > 0:
-                    top_arg = torch.topk(label, k=nonzero)
+                    top_arg = torch.argsort(label, descending=True)[:nonzero].long()
                     sub_q1_feat = q1_feat[top_arg]
                     sub_q2_feat = q2_feat[top_arg]
                     q1_q2_sim = cosine_similarity_of(sub_q1_feat, sub_q2_feat)
                     crl_label = torch.LongTensor([i for i in range(nonzero)]).cuda()
-                    loss += nn.functional.cross_entropy(q1_q2_sim / temp, crl_label)
+                    loss += 0.5 * nn.functional.cross_entropy(q1_q2_sim / temp, crl_label)
 
         return predict, loss
 
