@@ -2,8 +2,10 @@ from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
 import torch
+import Dictionary
 from tqdm import tqdm
-
+from sklearn.utils import shuffle
+from pytorch_pretrained_bert import BertTokenizer
 
 def str_to_int_list(s):
     return [int(x) for x in s.split()]
@@ -19,21 +21,21 @@ def batch_padding(q, q_len):
         q[i] = q[i] + [0] * (max_len - q_len[i])
     return np.array(q)
 
-
 def my_collate(batch):
-    tok_ids = [item[0] for item in batch]
-    seg_ids = [item[1] for item in batch]
-    out_ids = [item[2] for item in batch]
-    labels = np.array([item[3] for item in batch])
+    """ batch: (q1_idx, q2_idx, tok1_idx, tok2_idx, out1_ids, out2_ids, label)
+    """
+    new_batch = []
+    for i in range(6):
+        ids = [item[i] for item in batch]
+        ids_len = [len(item[i]) for item in batch]
+        ids = batch_padding(ids, ids_len)
+        ids = torch.from_numpy(ids).long()
+        new_batch.append(ids)
 
-    tok_len = np.array([len(item[0]) for item in batch])
+    labels = torch.FloatTensor([item[6] for item in batch])
+    new_batch.append(labels)
 
-    tok_ids = torch.from_numpy(batch_padding(tok_ids, tok_len)).long()
-    seg_ids = torch.from_numpy(batch_padding(seg_ids, tok_len)).long()
-    out_ids = torch.from_numpy(batch_padding(out_ids, tok_len)).long()
-    labels = torch.from_numpy(labels).float()
-
-    return [tok_ids, seg_ids, out_ids, labels]
+    return new_batch
 
 
 class OppoQuerySet(Dataset):
@@ -88,49 +90,71 @@ class OppoQuerySet(Dataset):
         """
         转换为MLM格式
         output_id = 0 即为非预测部分
+        共输出 原始q1 q2, 用于MLM的inq1 inq2 out1 out2, q1 q2 inq1 inq2同时用于crf训练
         """
         text1_ids = [tokens.get(t, 100) for t in text1]
         text2_ids = [tokens.get(t, 100) for t in text2]
+
         if random:
-            if np.random.random() < 0.5:
-                text1_ids, text2_ids = text2_ids, text1_ids
-            text1_ids, out1_ids = self.random_mask(text1_ids, tokens)
-            text2_ids, out2_ids = self.random_mask(text2_ids, tokens)
+            mask1_ids, out1_ids = self.random_mask(text1_ids, tokens)
+            mask2_ids, out2_ids = self.random_mask(text2_ids, tokens)
         else:
-            out1_ids = [0] * len(text1_ids)
-            out2_ids = [0] * len(text2_ids)
-        token_ids = [101] + text1_ids + [102] + text2_ids + [102]
-        segment_ids = [0] * len(token_ids)
-        output_ids = [label + 5] + out1_ids + [0] + out2_ids + [0]
-        return token_ids, segment_ids, output_ids
+            text1_out = [0] * len(text1_ids)
+            text2_out = [0] * len(text2_ids)
+
+        q1_ids = [101] + text1_ids + [102]
+        q2_ids = [101] + text2_ids + [102]
+
+        tok1_ids = [101] + mask1_ids + [102]
+        tok2_ids = [101] + mask2_ids + [102]
+
+        out1_ids = [0] + out1_ids + [0]
+        out2_ids = [0] + out2_ids + [0]
+
+        return q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids
 
     def process_data(self, dictionary, random=False):
         self.processed_data = []
         for i in tqdm(range(len(self.data)), desc="Process Data: ", ncols=100, total=len(self.data)):
             q1, q2, label = self.data[i]
-            token_ids, segment_ids, output_ids = \
+            
+            q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids = \
                 self.sample_convert(q1, q2, label, random, tokens=dictionary.tok_to_bert_id)
-            self.processed_data.append((token_ids, segment_ids, output_ids, label))
-
+            self.processed_data.append((q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids, label))
 
 if __name__ == '__main__':
     df_train = pd.read_table("./baseline_tfidf_lr/oppo_breeno_round1_data/gaiic_track3_round1_train_20210228.tsv",
                              names=['q1', 'q2', 'label']).fillna("0")
     df_test = pd.read_table('./baseline_tfidf_lr/oppo_breeno_round1_data/gaiic_track3_round1_testA_20210228.tsv',
                             names=['q1', 'q2']).fillna("0")
+    df_train = shuffle(df_train)
 
     max_value = -1
     min_value = 999999
     max_len = -1
 
-    trainset = OppoQuerySet(df_train, dataset='train')
-    trainloader = DataLoader(trainset, batch_size=1, shuffle=False, collate_fn=my_collate)
+    # split train and val
+    train_len = int(0.8 * len(df_train))
+    df_val = df_train[train_len:]
+    df_train = df_train[0:train_len]
 
-    count = 0
-    for q1, q2, a in trainloader:
-        print(q1)
-        print(q2)
-        print(a)
-        count = count + 1
-        if count >= 10:
-            break
+    trainset = OppoQuerySet(df_train, dataset='train')
+    valset = OppoQuerySet(df_val, dataset='val')
+    testset = OppoQuerySet(df_test, dataset='test')
+
+    # load dictionary
+    dictionary = Dictionary.Dictionary(trainset, valset, testset)
+    tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
+    dictionary.aliment_bert_id(tokenizer)
+
+    trainset.process_data(dictionary, random=True)
+    trainloader = DataLoader(trainset, batch_size=3, shuffle=False, collate_fn=my_collate)
+
+    for q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids, label in trainloader:
+        print(q1_ids)
+        print(tok1_ids)
+        print(out1_ids)
+        print(q2_ids)
+        print(tok2_ids)
+        print(out2_ids)
+        break
