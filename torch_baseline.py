@@ -76,47 +76,46 @@ for index, (train_index, val_index) in enumerate(kfold.split(df_train_)):
         train_y_true = []
         train_y_pred = []
 
-        for i, (token_ids, segment_ids, output_ids, a) in tqdm(enumerate(trainloader), ncols=100,
-                                                               desc="Epoch %d" % (epoch + 1), total=len(trainloader)):
+        for i, (q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids, label) in tqdm(enumerate(trainloader),
+                                                                                       ncols=100,
+                                                                                       desc="Epoch %d" % (epoch + 1),
+                                                                                       total=len(trainloader)):
             # prepare data
             optim.zero_grad()
-            token_ids, segment_ids, output_ids, a = token_ids.to(device), segment_ids.to(device), output_ids.to(
-                device), a.to(device)
+            q1, q2, q11, q21, q1_out, q2_out, label = q1_ids.to(device), q2_ids.to(device), \
+                                                      tok1_ids.to(device), tok2_ids.to(device), out1_ids.to(
+                device), out2_ids.to(device), label.to(device)
 
             # predict
-            pred = model(token_ids, segment_ids)  # bs 128
+            pred, loss = model(q1, q2, q11, q21, q1_out, q2_out, label)  # bs 128
 
             # backward
-            loss = F.cross_entropy(pred.view(-1, 21128), output_ids.view(-1), ignore_index=0)
             loss.backward()
             optim.step()
 
             # train score and acc
-            pred = pred[:, 0, 5:7]  # [bs, 2]
-            pred = pred[:, 1] / (pred.sum(dim=1) + 1e-8)  # [bs]
-            train_right += ((pred >= 0.5).float() * a + (pred < 0.5).float() * (1 - a)).sum().item()
-            train_num += a.size(0)
+            train_right += ((pred >= 0.5).float() * label + (pred < 0.5).float() * (1 - label)).sum().item()
+            train_num += label.size(0)
 
-            train_y_true.extend(list(a.cpu().numpy()))
+            train_y_true.extend(list(label.cpu().numpy()))
             train_y_pred.extend(list(pred.cpu().detach().numpy()))
         train_score = roc_auc_score(train_y_true, train_y_pred)
 
         model.eval()
         val_y_true = []
         val_y_pred = []
-        for i, (token_ids, segment_ids, output_ids, a) in enumerate(valloader):
-            token_ids, segment_ids, output_ids, a = token_ids.to(device), segment_ids.to(device), output_ids.to(
-                device), a.to(device)
+        for i, (q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids, label) in enumerate(valloader):
+            q1, q2, q11, q21, q1_out, q2_out, label = q1_ids.to(device), q2_ids.to(device), \
+                                                      tok1_ids.to(device), tok2_ids.to(device), out1_ids.to(
+                device), out2_ids.to(device), label.to(device)
             # predict
-            pred = model(token_ids, segment_ids)  # bs 128
-            pred = pred[:, 0, 5:7]  # [bs, 2]
-            pred = pred[:, 1] / (pred.sum(dim=1) + 1e-8)  # [bs]
+            pred, _ = model(q1, q2)  # bs 128
 
             # val score
-            val_right += ((pred >= 0.5).float() * a + (pred < 0.5).float() * (1 - a)).sum().item()
-            val_num += a.size(0)
+            val_right += ((pred >= 0.5).float() * label + (pred < 0.5).float() * (1 - label)).sum().item()
+            val_num += label.size(0)
 
-            val_y_true.extend(list(a.cpu().numpy()))
+            val_y_true.extend(list(label.cpu().numpy()))
             val_y_pred.extend(list(pred.cpu().detach().numpy()))
 
         val_score = roc_auc_score(val_y_true, val_y_pred)
@@ -130,21 +129,23 @@ for index, (train_index, val_index) in enumerate(kfold.split(df_train_)):
 
             model.eval()
             pred_size = 0
-            for i, (token_ids, segment_ids, output_ids, a) in enumerate(testloader):
-                token_ids, segment_ids = token_ids.to(device), segment_ids.to(device)
+            for i, (q1_ids, q2_ids, tok1_ids, tok2_ids, out1_ids, out2_ids, label) in enumerate(testloader):
+                q1, q2 = q1_ids.to(device), q2_ids.to(device)
 
                 # predict
-                pred = model(token_ids, segment_ids)  # bs 128
-                pred = pred[:, 0, 5:7]  # [bs, 2]
-                pred = pred[:, 1] / (pred.sum(dim=1) + 1e-8)  # [bs]
+                pred = model(q1, q2)  # bs 128
                 if i == 0:
                     pred_size = pred.size(0)
                 for k in range(pred.size(0)):
                     p = pred[k]
-                    test_results[index][i*pred_size + k] = p.item()
+                    test_results[index][i * pred_size + k] = p.item()
+
+            with open('result.tsv', 'w') as f:
+                for j in range(len(test_results[index])):
+                    f.write('%f\n' % test_results[index][j])
 
     model.to(torch.device('cpu'))
 avg_results = np.mean(test_results, axis=0)
-with open('result.tsv', 'w') as f:
+with open('avg_result.tsv', 'w') as f:
     for i in range(len(avg_results)):
         f.write('%f\n' % avg_results[i])

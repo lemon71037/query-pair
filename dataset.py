@@ -49,7 +49,7 @@ class OppoQuerySet(Dataset):
             a = df['label'].values
             self.data = zip(q1, q2, a)
         else:
-            self.data = zip(q1, q2, [-5] * len(q1))
+            self.data = zip(q1, q2, [-1] * len(q1))
 
         self.data = list(self.data)
         self.processed_data = []
