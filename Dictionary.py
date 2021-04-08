@@ -1,4 +1,3 @@
-from dataset import OppoQuerySet
 from pytorch_pretrained_bert import BertTokenizer
 import json
 import numpy as np
@@ -12,7 +11,7 @@ import numpy as np
 
 
 class Dictionary():
-    def __init__(self, trainset: OppoQuerySet, valset: OppoQuerySet, testset: OppoQuerySet):
+    def __init__(self, trainset, valset, testset):
         min_count = 5
 
         # 统计词频
